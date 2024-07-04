@@ -14,7 +14,6 @@ try:
     from dotenv import load_dotenv, find_dotenv
     from azure.core.credentials import AzureKeyCredential  
     from azure.search.documents import SearchClient  
-    from azure.search.documents.models import Vector  
     import google.generativeai as genai
 except Exception as e:
     logging.error(f"Startup Error: {str(e)}", exc_info=True)
@@ -22,27 +21,27 @@ except Exception as e:
     raise
 
 # Azure AI Search
+load_dotenv(find_dotenv('credential.env'), override=True)
 service_endpoint = os.environ['AZURE_AI_SEARCH_ENDPOINT']
 key = os.environ['AZURE_AI_SEARCH_KEY']
 index_name = os.environ['AZURE_AI_SEARCH_INDEX_NAME']
 credential = AzureKeyCredential(key)
 google_key = os.environ['GOOGLE_API_KEY']
 
-#Azure OpenAI
+# Azure OpenAI
 client = AzureOpenAI(
-  api_key = os.environ['AZURE_OPENAI_API_KEY'],  # this is also the default, it can be omitted
-  azure_endpoint = os.environ['AZURE_OPENAI_API_ENDPOINT'],
-  api_version = os.environ['AZURE_OPENAI_API_VERSION'],
-  http_client=DefaultHttpxClient(verify=False)
+    api_key=os.environ['AZURE_OPENAI_API_KEY'],
+    azure_endpoint=os.environ['AZURE_OPENAI_API_ENDPOINT'],
+    api_version=os.environ['AZURE_OPENAI_API_VERSION'],
+    http_client=DefaultHttpxClient(verify=False)
 )
 embedding_model = os.environ['EMBEDDING_MODEL_NAME']
 genai.configure(api_key=google_key)
 gpt4o_model = os.environ['GPT4O_MODEL_NAME']
-gemini_flash_model = genai.GenerativeModel('gemini-1.5-flash',
-                              generation_config={"response_mime_type": "application/json"})
+gemini_flash_model = genai.GenerativeModel('gemini-1.5-flash', generation_config={"response_mime_type": "application/json"})
 
 def generate_embeddings(text):
-    print("embedding_query: "+text)
+    print("embedding_query: " + text)
     response = client.embeddings.create(input=text, model=embedding_model)
     return response.data[0].embedding
 
@@ -57,10 +56,9 @@ def get_chat_completion(messages, model):
 def format_retrieved_documents(data_list):
     retrieved_documents = ""
     for item in data_list:
-        # Extract the 'content' and 'sourcepage' values
         content = item.get('content', '')
         sourcepage = item.get('sourcepage', '')
-        retrieved_documents += "sourcepage: "+sourcepage+ ", content: "+content+"\n"
+        retrieved_documents += "sourcepage: " + sourcepage + ", content: " + content + "\n"
     return retrieved_documents
 
 def transform_to_gemini(messages_chatgpt):
@@ -84,16 +82,16 @@ def get_chat_completion_from_gemini_pro(messages):
     return response.text
 
 def get_search_results(query):
-    search_client = SearchClient(
-    service_endpoint, index_name, credential=credential)
-    vector = Vector(value=generate_embeddings(query), k=3, fields="contentVector")
+    search_client = SearchClient(service_endpoint, index_name, credential=credential)
+    vector = generate_embeddings(query)
 
     results = search_client.search(
-    search_text=query,
-    vectors=[vector],
-    select=["content", "sourcepage"],
-    query_type="semantic", query_language="en-us", semantic_configuration_name='my-semantic-config', query_caption="extractive", query_answer="extractive",
-    top=3)
+        search_text=query,
+        vectors=[{"value": vector, "k": 3, "fields": ["contentVector"]}],
+        select=["content", "sourcepage"],
+        query_type="semantic", query_language="en-us", semantic_configuration_name='my-semantic-config', query_caption="extractive", query_answer="extractive",
+        top=3
+    )
     result_list = []
     for result in results:
         result_list.append(result)
@@ -118,9 +116,8 @@ def get_system_promt(message):
     """
     return system_prompt
 
-
 app = Flask(__name__)
-app.logger.info({service_endpoint})
+app.logger.info(service_endpoint)
 
 # Line Bot credentials
 line_bot_api = LineBotApi('LINE_CHANNEL_ACCESS_TOKEN')
@@ -139,16 +136,13 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_message = event.message.text
-    # Here you can integrate your chatbot logic
-    response_message = process_user_message(user_message)  # Your function to process the message
+    response_message = process_user_message(user_message)
     line_bot_api.reply_message(
         event.reply_token,
         TextSendMessage(text=response_message)
     )
 
 def process_user_message(message):
-    # Integrate with your existing Azure OpenAI code here
-    # For example, using get_chat_completion from your code
     messages = [
         {
             "role": "user",
@@ -160,7 +154,6 @@ def process_user_message(message):
         }
     ]
     messages_gemini = transform_to_gemini(messages)
-    # response = get_chat_completion(messages, gpt4o_model)
     response = get_chat_completion_from_gemini_pro(messages_gemini)
     return response
 
