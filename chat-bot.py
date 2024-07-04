@@ -111,6 +111,7 @@ def get_system_promt(message):
 
 
 app = Flask(__name__)
+app.logger.info({service_endpoint})
 
 # Line Bot credentials
 line_bot_api = LineBotApi('LINE_CHANNEL_ACCESS_TOKEN')
