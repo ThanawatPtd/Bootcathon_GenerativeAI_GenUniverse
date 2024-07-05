@@ -119,8 +119,8 @@ app = Flask(__name__)
 app.logger.info(service_endpoint)
 
 # Line Bot credentials
-line_bot_api = LineBotApi(os.environ('LINE_CHANNEL_ACCESS_TOKEN'))
-handler = WebhookHandler(os.environ('LINE_CHANNEL_SECRET'))
+line_bot_api = LineBotApi(os.environ['LINE_CHANNEL_ACCESS_TOKEN'])
+handler = WebhookHandler(os.environ['LINE_CHANNEL_SECRET'])
 
 @app.route('/callback', methods=['POST'])
 def callback():
