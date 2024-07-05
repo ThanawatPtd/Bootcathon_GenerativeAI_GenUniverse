@@ -10,6 +10,7 @@ try:
     from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
     import os
+    from openai import OpenAI
     from openai import AzureOpenAI, DefaultHttpxClient
     from dotenv import load_dotenv, find_dotenv
     from azure.core.credentials import AzureKeyCredential  
@@ -26,6 +27,11 @@ key = os.environ['AZURE_AI_SEARCH_KEY']
 index_name = os.environ['AZURE_AI_SEARCH_INDEX_NAME']
 credential = AzureKeyCredential(key)
 google_key = os.environ['GOOGLE_API_KEY']
+
+#Open AI
+client = OpenAI(
+  api_key=os.environ['OPENAI_API_KEY']
+)
 
 # Azure OpenAI
 client = AzureOpenAI(
@@ -80,6 +86,13 @@ def get_chat_completion_from_gemini_pro(messages):
     response = gemini_flash_model.generate_content(messages)
     return response.text
 
+def get_chat_completion_from_gpt4o(messages):
+    print('Generating answer using GPT-4.0 model')
+    response = client.chat.completions.create(
+        model=gpt4o_model,
+        messages=messages
+    )
+    return response.choices[0].message.content
 
 def get_system_promt(message):
     system_prompt = f"""
@@ -144,8 +157,10 @@ def process_user_message(message):
             "content": get_system_promt(message)
         }
     ]
-    messages_gemini = transform_to_gemini(messages)
-    response = get_chat_completion_from_gemini_pro(messages_gemini)
+
+    # messages_gemini = transform_to_gemini(messages)
+    response = get_chat_completion_from_gpt4o(messages)
+    # response = get_chat_completion_from_gemini_pro(messages_gemini)
     return response
 
 if __name__ == '__main__':
