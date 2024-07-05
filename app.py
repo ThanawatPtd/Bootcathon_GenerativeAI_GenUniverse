@@ -80,38 +80,17 @@ def get_chat_completion_from_gemini_pro(messages):
     response = gemini_flash_model.generate_content(messages)
     return response.text
 
-def get_search_results(query):
-    search_client = SearchClient(service_endpoint, index_name, credential=credential)
-    vector = generate_embeddings(query)
-
-    results = search_client.search(
-        search_text=query,
-        vectors=[{"value": vector, "k": 3, "fields": ["contentVector"]}],
-        select=["content", "sourcepage"],
-        query_type="semantic", query_language="en-us", semantic_configuration_name='my-semantic-config', query_caption="extractive", query_answer="extractive",
-        top=3
-    )
-    result_list = []
-    for result in results:
-        result_list.append(result)
-    return result_list
 
 def get_system_promt(message):
-    result_list = get_search_results(message)
     system_prompt = f"""
     ## On your role
-    - You are a chatbot for ExxonMobil named Mobilly, designed to help answer customer questions based on retrieved documents and relevant knowledge to refine the answers.
+    - You are a chatbot for ExxonMobil named Mobilly, designed to help answer customer questions.
     - You always respond in Thai.
     - Do not include greetings in your responses.
     - Be polite and answer as a kind, helpful assistant.
     - Mention the source of your answers.
 
-    ## Retrieved documents
-    {format_retrieved_documents(result_list)}
 
-    ## Instructions
-    - Only answer questions related to the topics covered in the retrieved documents.
-    - If a question is outside the scope of the retrieved documents, try to answer based on your knowledge.
     """
     return system_prompt
 
@@ -124,7 +103,14 @@ handler = WebhookHandler(os.environ['LINE_CHANNEL_SECRET'])
 
 @app.route('/', methods=['GET'])
 def home():
-    return '<h1>Hello</h1>'
+    return '<form action="/test" method="POST"><input type="text" name="message" placeholder="Enter your message"><button type="submit">Press</button></form>'
+
+@app.route('/test', methods=['POST'])
+def test():
+    message = request.form['message']
+    response = process_user_message(message)
+    # response = message
+    return response
 
 @app.route('/callback', methods=['POST'])
 def callback():

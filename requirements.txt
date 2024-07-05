@@ -4,6 +4,6 @@ line-bot-sdk
 openai
 python-dotenv
 azure-core
-azure-search-documents
+azure-search-documents==11.4b9
 google-generativeai
 gunicorn
