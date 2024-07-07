@@ -17,7 +17,6 @@ try:
     from dotenv import load_dotenv, find_dotenv
     from azure.core.credentials import AzureKeyCredential  
     from azure.search.documents import SearchClient  
-    from azure.search.documents.models import VectorQuery
     from azure.search.documents.models import VectorizedQuery
 
     import google.generativeai as genai
