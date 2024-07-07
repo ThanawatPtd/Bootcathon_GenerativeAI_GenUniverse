@@ -4,17 +4,22 @@ import logging
 logging.basicConfig(filename='/home/LogFiles/python_error.log', level=logging.ERROR)
 
 try:
+    print("Importing libraries")
     from flask import Flask, request, abort
     from linebot import LineBotApi, WebhookHandler
     from linebot.exceptions import InvalidSignatureError
     from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
     import os
+    import textwrap
     from openai import OpenAI
     from openai import AzureOpenAI, DefaultHttpxClient
     from dotenv import load_dotenv, find_dotenv
     from azure.core.credentials import AzureKeyCredential  
     from azure.search.documents import SearchClient  
+    from azure.search.documents.models import VectorQuery
+    from azure.search.documents.models import VectorizedQuery
+
     import google.generativeai as genai
 except Exception as e:
     logging.error(f"Startup Error: {str(e)}", exc_info=True)
@@ -25,13 +30,8 @@ except Exception as e:
 service_endpoint = os.environ['AZURE_AI_SEARCH_ENDPOINT']
 key = os.environ['AZURE_AI_SEARCH_KEY']
 index_name = os.environ['AZURE_AI_SEARCH_INDEX_NAME']
-credential = AzureKeyCredential(key)
 google_key = os.environ['GOOGLE_API_KEY']
-
-#Open AI
-client = OpenAI(
-  api_key=os.environ['OPENAI_API_KEY']
-)
+credential = AzureKeyCredential(key)
 
 # Azure OpenAI
 client = AzureOpenAI(
@@ -40,6 +40,11 @@ client = AzureOpenAI(
     api_version=os.environ['AZURE_OPENAI_API_VERSION'],
     http_client=DefaultHttpxClient(verify=False)
 )
+#Open AI
+clientAI = OpenAI(
+  api_key=os.environ['OPENAI_API_KEY']
+)
+
 embedding_model = os.environ['EMBEDDING_MODEL_NAME']
 genai.configure(api_key=google_key)
 gpt4o_model = os.environ['GPT4O_MODEL_NAME']
@@ -50,13 +55,6 @@ def generate_embeddings(text):
     response = client.embeddings.create(input=text, model=embedding_model)
     return response.data[0].embedding
 
-def get_chat_completion(messages, model):
-    print(f'Generating answer using {model} LLM model')
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages
-    )
-    return response.choices[0].message.content
 
 def format_retrieved_documents(data_list):
     retrieved_documents = ""
@@ -88,22 +86,52 @@ def get_chat_completion_from_gemini_pro(messages):
 
 def get_chat_completion_from_gpt4o(messages):
     print('Generating answer using GPT-4.0 model')
-    response = client.chat.completions.create(
+    response = clientAI.chat.completions.create(
         model=gpt4o_model,
         messages=messages
     )
     return response.choices[0].message.content
 
+def get_search_results(query):
+    search_client = SearchClient(service_endpoint,
+                                 index_name, credential=credential)
+    
+    # vector = VectorQuery(value=generate_embeddings(query), k=3, fields="contentVector")
+    vector_query = VectorizedQuery(vector=generate_embeddings(query), k_nearest_neighbors=3, fields="contentVector")
+    try:
+        results = search_client.search(
+        search_text=query,
+        vector_queries=[vector_query],
+        select=["content", "sourcepage"],
+        query_type="semantic",
+        semantic_configuration_name="my-semantic-config",
+        top=3)
+        result_list = []
+        for result in results:
+            result_list.append(result)
+        return result_list
+    except Exception as e:
+        # logging.error(f"zzzzzzzzz: {str(vector)}", exc_info=True)
+        print(f"Error: {str(e)}", file=sys.stderr)
+        raise
+
+
 def get_system_promt(message):
+    result_list = get_search_results(message)
     system_prompt = f"""
     ## On your role
-    - You are a chatbot for ExxonMobil named Mobilly, designed to help answer customer questions.
+    - You are a chatbot for ExxonMobil named Mobilly, designed to help answer customer questions based on retrieved documents and relevant knowledge to refine the answers.
     - You always respond in Thai.
     - Do not include greetings in your responses.
     - Be polite and answer as a kind, helpful assistant.
     - Mention the source of your answers.
 
+    ## Retrieved documents
+    {format_retrieved_documents(result_list)}
 
+    ## Instructions
+    - Only answer questions related to the topics covered in the retrieved documents.
+    - If a question is outside the scope of the retrieved documents, try to answer based on your knowledge.
     """
     return system_prompt
 
@@ -120,8 +148,14 @@ def home():
 
 @app.route('/test', methods=['POST'])
 def test():
-    message = request.form['message']
-    response = process_user_message(message)
+    try:
+        message = request.form['message']
+        response = process_user_message(message)
+    except Exception as e:
+        logging.error(f"yyyyyyyyyyyyyyyyyy: {str(e)}", exc_info=True)
+        print(f"Error: {str(e)}", file=sys.stderr)
+        raise
+
     # response = message
     return response
 
