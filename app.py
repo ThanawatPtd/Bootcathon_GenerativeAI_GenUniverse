@@ -8,7 +8,7 @@ try:
     from flask import Flask, request, abort
     from linebot import LineBotApi, WebhookHandler
     from linebot.exceptions import InvalidSignatureError
-    from linebot.models import MessageEvent, TextMessage, TextSendMessage, AudioSendMessage
+    from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
     import os
     import textwrap
@@ -18,19 +18,8 @@ try:
     from azure.core.credentials import AzureKeyCredential  
     from azure.search.documents import SearchClient  
     from azure.search.documents.models import VectorizedQuery
-    import azure.cognitiveservices.speech as speechsdk
-    from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
-    from datetime import datetime, timedelta
-    from pydub import AudioSegment
-    from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, AudioConfig
-    import requests
-    from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, ResultReason
-    from azure.cognitiveservices.speech.audio import AudioOutputConfig
-    from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
-    from datetime import datetime, timedelta
-    from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
-    from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
     import json
+
     import google.generativeai as genai
     
 except Exception as e:
@@ -113,64 +102,6 @@ def get_chat_completion_from_gpt4o(messages):
     )
     return response.choices[0].message.content
 
-def text_to_speech(text):
-    # Check for required environment variables
-    speech_key = os.environ.get('SPEECH_KEY')
-    service_region = os.environ.get('SPEECH_REGION')
-    storage_connection_string = os.environ.get('AZURE_BLOB_STORAGE_CONNECTION_STRING')
-    container_name = os.environ.get('AZURE_BLOB_CONTAINER_NAME')
-    storage_key = os.environ.get('AZURE_BLOB_STORAGE_KEY')
-
-    missing_vars = [var for var in ['SPEECH_KEY', 'SPEECH_REGION', 'AZURE_BLOB_STORAGE_CONNECTION_STRING', 'AZURE_BLOB_CONTAINER_NAME', 'AZURE_BLOB_STORAGE_KEY']
-                    if os.environ.get(var) is None]
-
-    if missing_vars:
-        return f"Missing environment variables: {', '.join(missing_vars)}"
-
-    try:
-        # Azure Speech Service Configuration
-        speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
-        speech_config.speech_synthesis_voice_name = 'th-TH-PremwadeeNeural'
-
-        speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config)
-       
-        result = speech_synthesizer.speak_text_async(text).get()
-        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-            audio_data = result.audio_data
-            blob_url = upload_audio_to_storage(audio_data, storage_connection_string, container_name, storage_key)
-            return blob_url
-        else:
-            return f"Failed to synthesize speech: {result.reason}"
-
-    except Exception as e:
-        return f"An error occurred during speech synthesis: {e}"
-
-def upload_audio_to_storage(audio_data, connection_string, container_name, storage_key):
-    try:
-        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-        blob_name = 'synthesized_audio.wav'
-        blob_client = blob_service_client.get_blob_client(container_name, blob_name)
-        
-        blob_client.upload_blob(audio_data, overwrite=True)
-
-        # Generate SAS token
-        sas_token = generate_blob_sas(
-            account_name=blob_service_client.account_name,
-            container_name=container_name,
-            blob_name=blob_name,
-            account_key=storage_key,
-            permission=BlobSasPermissions(read=True),
-            expiry=datetime.utcnow() + timedelta(hours=1)  # SAS token valid for 1 hour
-        )
-
-        # Generate the full URL with SAS token
-        blob_url = f"https://{blob_service_client.account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
-        return blob_url
-
-    except Exception as e:
-        return f"An error occurred during audio upload: {e}"
-
-
 def extract_keywords_and_flag_with_llm(query):
     prompt = f"""Analyze the following query, extract the main keywords, and assign a category number:
 
@@ -242,6 +173,7 @@ def flag_and_execute(message):
     - You always respond in Thai.
     - You call yourself "น้องลิงค์กี้" and call the customer "คุณลูกค้า".
     - Do not include greetings in your responses.
+    - Mention the source of your answers.
     ## Retrieved documents
     {format_retrieved_documents(result_list)}
 
@@ -262,6 +194,7 @@ def flag_and_execute(message):
     - You always respond in Thai.
     - You call yourself "น้องลิงค์กี้" and call the customer "คุณลูกค้า".
     - Do not include greetings in your responses.
+    - Mention the source of your answers.
     ## Retrieved documents
     {format_retrieved_documents(result_list)}
 
@@ -282,6 +215,7 @@ def flag_and_execute(message):
     - You always respond in Thai.
     - You call yourself "น้องลิงค์กี้" and call the customer "คุณลูกค้า".
     - Do not include greetings in your responses.
+    - Mention the source of your answers.
     ## Retrieved documents
     {format_retrieved_documents(result_list)}
 
@@ -325,6 +259,7 @@ def flag_and_execute(message):
     - You always respond in Thai.
     - You call yourself "น้องลิงค์กี้" and call the customer "คุณลูกค้า".
     - Do not include greetings in your responses.
+    - Mention the source of your answers.
     ## Retrieved documents
     {format_retrieved_documents(result_list)}
 
@@ -406,38 +341,11 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_message = event.message.text
-    
-    response_message,category = process_user_message(user_message)
-    if category != 2:
-        textm = response_message + str(category) + "here"
-
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=textm)
-        )
-    else:
-        url = text_to_speech(response_message)
-        # time = get_audio_duration(url)
-        textm = response_message + str(url) + str(category)+ "เข้าตรงนี้นะ"
-        # text_message = TextSendMessage(text=textm)
-        # audio_message = AudioSendMessage(
-        # original_content_url=url,  
-        # duration=time
-        # )
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=textm)
-      
-        )
-       
-        # line_bot_api.reply_message(
-        #     event.reply_token,
-        #     TextSendMessage(text=textm)
-      
-        # )
-        
-
-
+    response_message = process_user_message(user_message)
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=response_message)
+    )
 
 def process_user_message(message):
     system_prompt, category = flag_and_execute(message)
@@ -446,7 +354,6 @@ def process_user_message(message):
         prompt = message + system_prompt
 
         response = get_chat_completion_from_gemini_pro(prompt)
-      
         # print(response)
 
     elif category in [4,5]:
@@ -456,7 +363,7 @@ def process_user_message(message):
         ]
         response = get_chat_completion_from_gpt4o(messages)
         # print(response)
-    return response, category
+    return response
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000)
