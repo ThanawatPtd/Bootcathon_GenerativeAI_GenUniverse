@@ -414,7 +414,7 @@ def handle_message(event):
     else:
         url = text_to_speech(response_message)
         time = get_audio_duration("data/output.wav")
-        text_message = TextSendMessage(text=response_message)
+        text_message = TextSendMessage(text=response_message + url + time + "เข้าตรงนี้นะ")
         audio_message = AudioSendMessage(
         original_content_url=url,  
         duration=time
