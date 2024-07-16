@@ -24,17 +24,13 @@ try:
     from pydub import AudioSegment
     from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, AudioConfig
     import requests
-    import tempfile
     from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, ResultReason
     from azure.cognitiveservices.speech.audio import AudioOutputConfig
     from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
     from datetime import datetime, timedelta
     from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
-
-
-
+    from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
     import json
-
     import google.generativeai as genai
     
 except Exception as e:
@@ -118,57 +114,63 @@ def get_chat_completion_from_gpt4o(messages):
     return response.choices[0].message.content
 
 def text_to_speech(text):
+    # Check for required environment variables
+    speech_key = os.environ.get('SPEECH_KEY')
+    service_region = os.environ.get('SPEECH_REGION')
+    storage_connection_string = os.environ.get('AZURE_BLOB_STORAGE_CONNECTION_STRING')
+    container_name = os.environ.get('AZURE_BLOB_CONTAINER_NAME')
+    storage_key = os.environ.get('AZURE_BLOB_STORAGE_KEY')
+
+    missing_vars = [var for var in ['SPEECH_KEY', 'SPEECH_REGION', 'AZURE_BLOB_STORAGE_CONNECTION_STRING', 'AZURE_BLOB_CONTAINER_NAME', 'AZURE_BLOB_STORAGE_KEY']
+                    if os.environ.get(var) is None]
+
+    if missing_vars:
+        return f"Missing environment variables: {', '.join(missing_vars)}"
+
     try:
-        # Initialize speech config
-        speech_key = os.environ.get('SPEECH_KEY')
-        speech_region = os.environ.get('SPEECH_REGION')
-        if not speech_key or not speech_region:
-            return "Speech key or region not found in environment variables."
-        
-        speech_config = SpeechConfig(subscription=speech_key, region=speech_region)
+        # Azure Speech Service Configuration
+        speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
         speech_config.speech_synthesis_voice_name = 'th-TH-PremwadeeNeural'
 
-        # Use a temporary file for storing the audio
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio_file:
-            audio_output = AudioOutputConfig(filename=temp_audio_file.name)
-            speech_synthesizer = SpeechSynthesizer(speech_config=speech_config, audio_config=audio_output)
+        speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config)
+       
+        result = speech_synthesizer.speak_text_async(text).get()
+        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+            audio_data = result.audio_data
+            blob_url = upload_audio_to_storage(audio_data, storage_connection_string, container_name, storage_key)
+            return blob_url
+        else:
+            return f"Failed to synthesize speech: {result.reason}"
 
-            # Synthesize speech
-            result = speech_synthesizer.speak_text_async(text).get()
-            if result.reason != ResultReason.SynthesizingAudioCompleted:
-                return f"Speech synthesis failed: {result.reason}. Details: {result.error_details}"
+    except Exception as e:
+        return f"An error occurred during speech synthesis: {e}"
 
-            temp_audio_file.close()  # Close the file so it can be read
-
-            # Upload to Blob Storage
-            connection_string = os.environ.get('AZURE_BLOB_STORAGE_CONNECTION_STRING')
-            container_name = os.environ.get('AZURE_BLOB_CONTAINER_NAME')
-            if not connection_string or not container_name:
-                return "Azure Blob Storage connection string or container name not found in environment variables."
-
-            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-            blob_client = blob_service_client.get_blob_client(container_name, "output_audio_test.wav")
-
-            with open(temp_audio_file.name, "rb") as audio_stream:
-                blob_client.upload_blob(audio_stream, overwrite=True)
+def upload_audio_to_storage(audio_data, connection_string, container_name, storage_key):
+    try:
+        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        blob_name = 'synthesized_audio.wav'
+        blob_client = blob_service_client.get_blob_client(container_name, blob_name)
+        
+        # Upload audio data to Azure Blob Storage
+        blob_client.upload_blob(audio_data, overwrite=True)
 
         # Generate SAS token
         sas_token = generate_blob_sas(
             account_name=blob_service_client.account_name,
             container_name=container_name,
-            blob_name="output_audio_test.wav",
-            account_key=os.environ['AZURE_BLOB_STORAGE_KEY'],
+            blob_name=blob_name,
+            account_key=storage_key,
             permission=BlobSasPermissions(read=True),
-            expiry=datetime.utcnow() + timedelta(hours=1)
+            expiry=datetime.utcnow() + timedelta(hours=1)  # SAS token valid for 1 hour
         )
 
-        blob_url = f"https://{blob_service_client.account_name}.blob.core.windows.net/{container_name}/output_audio_test.wav?{sas_token}"
+        # Generate the full URL with SAS token
+        blob_url = f"https://{blob_service_client.account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
         return blob_url
 
     except Exception as e:
-        return f"An error occurred: {e}"
+        return f"An error occurred during audio upload: {e}"
 
-    
 
 def extract_keywords_and_flag_with_llm(query):
     prompt = f"""Analyze the following query, extract the main keywords, and assign a category number:
