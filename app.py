@@ -23,11 +23,15 @@ try:
     from datetime import datetime, timedelta
     from pydub import AudioSegment
     from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, AudioConfig
-    from azure.cognitiveservices.speech.audio import AudioOutputConfig
-    import io
     import requests
-    from pydub import AudioSegment
     import tempfile
+    from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, ResultReason
+    from azure.cognitiveservices.speech.audio import AudioOutputConfig
+    from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+    from datetime import datetime, timedelta
+    from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+
+
 
     import json
 
@@ -116,68 +120,56 @@ def get_chat_completion_from_gpt4o(messages):
 def text_to_speech(text):
     try:
         # Initialize speech config
-        speech_config = speechsdk.SpeechConfig(subscription=os.environ.get('SPEECH_KEY'), region=os.environ.get('SPEECH_REGION'))
+        speech_key = os.environ.get('SPEECH_KEY')
+        speech_region = os.environ.get('SPEECH_REGION')
+        if not speech_key or not speech_region:
+            raise ValueError("Speech key or region not found in environment variables.")
+
+        speech_config = SpeechConfig(subscription=speech_key, region=speech_region)
         speech_config.speech_synthesis_voice_name = 'th-TH-PremwadeeNeural'
 
-        # Use BytesIO for in-memory storage
-        audio_stream = io.BytesIO()
-        audio_config = speechsdk.audio.AudioOutputConfig(stream=speechsdk.AudioDataStream(audio_stream))
-        speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
+        # Use a temporary file for storing the audio
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio_file:
+            audio_output = AudioOutputConfig(filename=temp_audio_file.name)
+            speech_synthesizer = SpeechSynthesizer(speech_config=speech_config, audio_config=audio_output)
 
-        # Synthesize speech
-        speech_synthesis_result = speech_synthesizer.speak_text_async(text).get()
-        if speech_synthesis_result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
-            print(f"Speech synthesis failed: {speech_synthesis_result.reason}")
-            return None
+            # Synthesize speech
+            result = speech_synthesizer.speak_text_async(text).get()
+            if result.reason != ResultReason.SynthesizingAudioCompleted:
+                print(f"Speech synthesis failed: {result.reason}")
+                return None
 
-        # Upload to Blob Storage
-        connection_string = os.environ['AZURE_BLOB_STORAGE_CONNECTION_STRING']
-        container_name = os.environ['AZURE_BLOB_CONTAINER_NAME']
-        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-        blob_container = blob_service_client.get_container_client(container_name)
+            temp_audio_file.close()  # Close the file so it can be read
 
-        if not blob_container.exists():
-            blob_container.create_container()
+            # Upload to Blob Storage
+            connection_string = os.environ.get('AZURE_BLOB_STORAGE_CONNECTION_STRING')
+            container_name = os.environ.get('AZURE_BLOB_CONTAINER_NAME')
+            if not connection_string or not container_name:
+                raise ValueError("Azure Blob Storage connection string or container name not found in environment variables.")
 
-        blob_name = "output_audio_test.wav"
-        audio_stream.seek(0)  # Move to the beginning of the BytesIO stream
-        blob_client = blob_container.get_blob_client(blob_name)
-        blob_client.upload_blob(audio_stream, overwrite=True)
+            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+            blob_client = blob_service_client.get_blob_client(container_name, "output_audio_test.wav")
+
+            with open(temp_audio_file.name, "rb") as audio_stream:
+                blob_client.upload_blob(audio_stream, overwrite=True)
 
         # Generate SAS token
         sas_token = generate_blob_sas(
             account_name=blob_service_client.account_name,
             container_name=container_name,
-            blob_name=blob_name,
+            blob_name="output_audio_test.wav",
             account_key=os.environ['AZURE_BLOB_STORAGE_KEY'],
             permission=BlobSasPermissions(read=True),
             expiry=datetime.utcnow() + timedelta(hours=1)
         )
 
-        blob_url = f"https://{blob_service_client.account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
+        blob_url = f"https://{blob_service_client.account_name}.blob.core.windows.net/{container_name}/output_audio_test.wav?{sas_token}"
         return blob_url
 
     except Exception as e:
         print(f"An error occurred: {e}")
         return None
-
-def get_audio_duration(url):
-    # Download the audio file from the URL
-    response = requests.get(url)
     
-    if response.status_code == 200:
-        # Use a temporary file to store the downloaded audio
-        with tempfile.NamedTemporaryFile(delete=True) as temp_file:
-            temp_file.write(response.content)
-            temp_file.flush()  # Ensure the file is written and ready to be used
-            
-            # Load the audio file using pydub
-            audio = AudioSegment.from_file(temp_file.name)
-            duration = len(audio)  # Duration in milliseconds
-            return duration
-    else:
-        print(f"Failed to download audio: {response.status_code}")
-        return None
 
 def extract_keywords_and_flag_with_llm(query):
     prompt = f"""Analyze the following query, extract the main keywords, and assign a category number:
@@ -417,7 +409,7 @@ def handle_message(event):
     
     response_message,category = process_user_message(user_message)
     if category != 2:
-        textm = response_message + str(category) + "heree"
+        textm = response_message + str(category) + "here"
 
         line_bot_api.reply_message(
             event.reply_token,
