@@ -151,7 +151,6 @@ def upload_audio_to_storage(audio_data, connection_string, container_name, stora
         blob_name = 'synthesized_audio.wav'
         blob_client = blob_service_client.get_blob_client(container_name, blob_name)
         
-        # Upload audio data to Azure Blob Storage
         blob_client.upload_blob(audio_data, overwrite=True)
 
         # Generate SAS token
