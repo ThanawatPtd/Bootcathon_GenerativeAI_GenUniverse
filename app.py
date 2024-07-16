@@ -8,7 +8,7 @@ try:
     from flask import Flask, request, abort
     from linebot import LineBotApi, WebhookHandler
     from linebot.exceptions import InvalidSignatureError
-    from linebot.models import MessageEvent, TextMessage, TextSendMessage
+    from linebot.models import MessageEvent, TextMessage, TextSendMessage, AudioSendMessage
 
     import os
     import textwrap
@@ -18,6 +18,14 @@ try:
     from azure.core.credentials import AzureKeyCredential  
     from azure.search.documents import SearchClient  
     from azure.search.documents.models import VectorizedQuery
+    import azure.cognitiveservices.speech as speechsdk
+    from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+    from datetime import datetime, timedelta
+    from pydub import AudioSegment
+    from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, AudioConfig
+    from azure.cognitiveservices.speech.audio import AudioOutputConfig
+
+
     import json
 
     import google.generativeai as genai
@@ -101,6 +109,61 @@ def get_chat_completion_from_gpt4o(messages):
         messages=messages
     )
     return response.choices[0].message.content
+
+def text_to_speech(text):
+    
+    # Set up the subscription info for the Speech Service:
+    speech_config = speechsdk.SpeechConfig(subscription=os.environ.get('SPEECH_KEY'), region=os.environ.get('SPEECH_REGION'))
+
+    # Set the voice name
+    speech_config.speech_synthesis_voice_name = 'th-TH-PremwadeeNeural'
+
+    # Set up the audio configuration to save to a file
+    file_path = "data/output_audio.wav"
+    audio_config = speechsdk.audio.AudioOutputConfig(filename=file_path)
+
+    # Create the synthesizer
+    speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
+
+
+    speech_synthesis_result = speech_synthesizer.speak_text_async(text).get()
+
+    connection_string = os.environ['AZURE_BLOB_STORAGE_CONNECTION_STRING']
+    container_name = os.environ['AZURE_BLOB_CONTAINER_NAME']
+
+    blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+    blob_container = blob_service_client.get_container_client(container_name)
+    if not blob_container.exists():
+        blob_container.create_container()
+
+    # Define the file path and blob name
+    file_path = "data/output_audio.wav"
+    blob_name = "output_audio.wav"
+
+    # Upload the file to Azure Blob Storage
+    with open(file_path, "rb") as data:
+        blob_client = blob_container.get_blob_client(blob_name)
+        blob_client.upload_blob(data, overwrite=True)
+
+    sas_token = generate_blob_sas(
+        account_name=blob_service_client.account_name,
+        container_name=container_name,
+        blob_name=blob_name,
+        account_key=os.environ['AZURE_BLOB_STORAGE_KEY'],
+        permission=BlobSasPermissions(read=True),
+        expiry=datetime.utcnow() + timedelta(hours=1)  # SAS token valid for 1 hour
+    )
+
+    # Generate the full URL with SAS token
+    blob_url = f"https://{blob_service_client.account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
+    return blob_url
+
+def get_audio_duration(file_path):
+    audio = AudioSegment.from_file(file_path)
+    duration = len(audio)  # Duration in milliseconds
+    return duration
+
+
 
 def extract_keywords_and_flag_with_llm(query):
     prompt = f"""Analyze the following query, extract the main keywords, and assign a category number:
@@ -341,11 +404,28 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_message = event.message.text
-    response_message = process_user_message(user_message)
-    line_bot_api.reply_message(
-        event.reply_token,
-        TextSendMessage(text=response_message)
-    )
+    
+    response_message,category = process_user_message(user_message)
+    if category != 2:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=response_message)
+        )
+    else:
+        url = text_to_speech(response_message)
+        time = get_audio_duration("data/output.wav")
+        text_message = TextSendMessage(text=response_message)
+        audio_message = AudioSendMessage(
+        original_content_url=url,  
+        duration=time
+        )
+        # Reply with both text and audio messages
+        line_bot_api.reply_message(
+            event.reply_token,
+            [text_message, audio_message]
+        )
+
+
 
 def process_user_message(message):
     system_prompt, category = flag_and_execute(message)
@@ -354,6 +434,7 @@ def process_user_message(message):
         prompt = message + system_prompt
 
         response = get_chat_completion_from_gemini_pro(prompt)
+      
         # print(response)
 
     elif category in [4,5]:
@@ -363,7 +444,7 @@ def process_user_message(message):
         ]
         response = get_chat_completion_from_gpt4o(messages)
         # print(response)
-    return response
+    return response, category
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000)
