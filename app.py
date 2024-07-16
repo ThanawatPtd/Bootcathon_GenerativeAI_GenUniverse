@@ -123,8 +123,8 @@ def text_to_speech(text):
         speech_key = os.environ.get('SPEECH_KEY')
         speech_region = os.environ.get('SPEECH_REGION')
         if not speech_key or not speech_region:
-            raise ValueError("Speech key or region not found in environment variables.")
-
+            return "Speech key or region not found in environment variables."
+        
         speech_config = SpeechConfig(subscription=speech_key, region=speech_region)
         speech_config.speech_synthesis_voice_name = 'th-TH-PremwadeeNeural'
 
@@ -136,8 +136,7 @@ def text_to_speech(text):
             # Synthesize speech
             result = speech_synthesizer.speak_text_async(text).get()
             if result.reason != ResultReason.SynthesizingAudioCompleted:
-                print(f"Speech synthesis failed: {result.reason}")
-                return None
+                return f"Speech synthesis failed: {result.reason}. Details: {result.error_details}"
 
             temp_audio_file.close()  # Close the file so it can be read
 
@@ -145,7 +144,7 @@ def text_to_speech(text):
             connection_string = os.environ.get('AZURE_BLOB_STORAGE_CONNECTION_STRING')
             container_name = os.environ.get('AZURE_BLOB_CONTAINER_NAME')
             if not connection_string or not container_name:
-                raise ValueError("Azure Blob Storage connection string or container name not found in environment variables.")
+                return "Azure Blob Storage connection string or container name not found in environment variables."
 
             blob_service_client = BlobServiceClient.from_connection_string(connection_string)
             blob_client = blob_service_client.get_blob_client(container_name, "output_audio_test.wav")
@@ -167,8 +166,8 @@ def text_to_speech(text):
         return blob_url
 
     except Exception as e:
-        print(f"An error occurred: {e}")
-        return None
+        return f"An error occurred: {e}"
+
     
 
 def extract_keywords_and_flag_with_llm(query):
