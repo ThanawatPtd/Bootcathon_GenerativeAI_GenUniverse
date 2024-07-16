@@ -24,7 +24,7 @@ try:
     from pydub import AudioSegment
     from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, AudioConfig
     from azure.cognitiveservices.speech.audio import AudioOutputConfig
-
+    import tempfile
 
     import json
 
@@ -110,60 +110,38 @@ def get_chat_completion_from_gpt4o(messages):
     )
     return response.choices[0].message.content
 
-def text_to_speech(text):
-    
-    # Set up the subscription info for the Speech Service:
+def text_to_speech(text, temp_dir):
     speech_config = speechsdk.SpeechConfig(subscription=os.environ.get('SPEECH_KEY'), region=os.environ.get('SPEECH_REGION'))
-
-    # Set the voice name
     speech_config.speech_synthesis_voice_name = 'th-TH-PremwadeeNeural'
-
-    # Set up the audio configuration to save to a file
-    file_path = "data/output_audio.wav"
+    file_path = os.path.join(temp_dir, "output_audio.wav")
     audio_config = speechsdk.audio.AudioOutputConfig(filename=file_path)
-
-    # Create the synthesizer
     speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
-
-
     speech_synthesis_result = speech_synthesizer.speak_text_async(text).get()
-
     connection_string = os.environ['AZURE_BLOB_STORAGE_CONNECTION_STRING']
     container_name = os.environ['AZURE_BLOB_CONTAINER_NAME']
-
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
     blob_container = blob_service_client.get_container_client(container_name)
     if not blob_container.exists():
         blob_container.create_container()
-
-    # Define the file path and blob name
-    file_path = "data/output_audio.wav"
     blob_name = "output_audio.wav"
-
-    # Upload the file to Azure Blob Storage
     with open(file_path, "rb") as data:
         blob_client = blob_container.get_blob_client(blob_name)
         blob_client.upload_blob(data, overwrite=True)
-
     sas_token = generate_blob_sas(
         account_name=blob_service_client.account_name,
         container_name=container_name,
         blob_name=blob_name,
         account_key=os.environ['AZURE_BLOB_STORAGE_KEY'],
         permission=BlobSasPermissions(read=True),
-        expiry=datetime.utcnow() + timedelta(hours=1)  # SAS token valid for 1 hour
+        expiry=datetime.utcnow() + timedelta(hours=1)
     )
-
-    # Generate the full URL with SAS token
     blob_url = f"https://{blob_service_client.account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
-    return blob_url
+    return blob_url, file_path
 
 def get_audio_duration(file_path):
     audio = AudioSegment.from_file(file_path)
     duration = len(audio)  # Duration in milliseconds
     return duration
-
-
 
 def extract_keywords_and_flag_with_llm(query):
     prompt = f"""Analyze the following query, extract the main keywords, and assign a category number:
@@ -236,7 +214,6 @@ def flag_and_execute(message):
     - You always respond in Thai.
     - You call yourself "น้องลิงค์กี้" and call the customer "คุณลูกค้า".
     - Do not include greetings in your responses.
-    - Mention the source of your answers.
     ## Retrieved documents
     {format_retrieved_documents(result_list)}
 
@@ -257,7 +234,6 @@ def flag_and_execute(message):
     - You always respond in Thai.
     - You call yourself "น้องลิงค์กี้" and call the customer "คุณลูกค้า".
     - Do not include greetings in your responses.
-    - Mention the source of your answers.
     ## Retrieved documents
     {format_retrieved_documents(result_list)}
 
@@ -278,7 +254,6 @@ def flag_and_execute(message):
     - You always respond in Thai.
     - You call yourself "น้องลิงค์กี้" and call the customer "คุณลูกค้า".
     - Do not include greetings in your responses.
-    - Mention the source of your answers.
     ## Retrieved documents
     {format_retrieved_documents(result_list)}
 
@@ -322,7 +297,6 @@ def flag_and_execute(message):
     - You always respond in Thai.
     - You call yourself "น้องลิงค์กี้" and call the customer "คุณลูกค้า".
     - Do not include greetings in your responses.
-    - Mention the source of your answers.
     ## Retrieved documents
     {format_retrieved_documents(result_list)}
 
@@ -414,19 +388,33 @@ def handle_message(event):
             TextSendMessage(text=textm)
         )
     else:
-        url = text_to_speech(response_message)
-        time = get_audio_duration("data/output.wav")
-        textm = response_message + str(url) + str(time) + str(category)+ "เข้าตรงนี้นะ"
-        text_message = TextSendMessage(text=textm)
-        audio_message = AudioSendMessage(
-        original_content_url=url,  
-        duration=time
-        )
+        # url = text_to_speech(response_message)
+        # time = get_audio_duration("data/output.wav")
+        # textm = response_message + str(url) + str(time) + str(category)+ "เข้าตรงนี้นะ"
+        # text_message = TextSendMessage(text=textm)
+        # audio_message = AudioSendMessage(
+        # original_content_url=url,  
+        # duration=time
+        # )
+        # line_bot_api.reply_message(
+        #     event.reply_token,
+        #     TextSendMessage(text=textm)
+      
+        # )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+                audio_url, audio_path = text_to_speech(response_message, temp_dir)
+                audio_duration = get_audio_duration(audio_path)
+                print(f"audio_url = {audio_url}, audio_duration = {audio_duration}")
+                app.logger.info(f"audio_url = {audio_url}, audio_duration = {audio_duration}")
+                textm = response_message + str(audio_url) + str(category)+ "เข้าตรงนี้นะ"
+
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text=textm)
-
+      
         )
+        
 
 
 
