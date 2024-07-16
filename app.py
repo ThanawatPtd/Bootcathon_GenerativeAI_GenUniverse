@@ -407,22 +407,25 @@ def handle_message(event):
     
     response_message,category = process_user_message(user_message)
     if category != 2:
+        textm = response_message + str(category) + "here"
+
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=response_message)
+            TextSendMessage(text=textm)
         )
     else:
         url = text_to_speech(response_message)
         time = get_audio_duration("data/output.wav")
-        text_message = TextSendMessage(text=response_message + url + time + "เข้าตรงนี้นะ")
+        textm = response_message + str(url) + str(time) + str(category)+ "เข้าตรงนี้นะ"
+        text_message = TextSendMessage(text=textm)
         audio_message = AudioSendMessage(
         original_content_url=url,  
         duration=time
         )
-        # Reply with both text and audio messages
         line_bot_api.reply_message(
             event.reply_token,
-            [text_message, audio_message]
+            TextSendMessage(text=textm)
+
         )
 
 
