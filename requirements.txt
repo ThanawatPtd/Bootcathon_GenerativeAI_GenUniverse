@@ -16,3 +16,6 @@ streamlit
 requests
 pdfkit
 beautifulsoup4
+azure-cognitiveservices-speech
+pydub
+requests
